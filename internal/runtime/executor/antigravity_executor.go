@@ -1284,16 +1284,26 @@ func (e *AntigravityExecutor) buildRequest(ctx context.Context, auth *cliproxyau
 
 	useAntigravitySchema := strings.Contains(modelName, "claude") || strings.Contains(modelName, "gemini-3-pro-high")
 	payloadStr := string(payload)
-	paths := make([]string, 0)
-	util.Walk(gjson.Parse(payloadStr), "", "parametersJsonSchema", &paths)
-	for _, p := range paths {
-		payloadStr, _ = util.RenameKey(payloadStr, p, p[:len(p)-len("parametersJsonSchema")]+"parameters")
-	}
 
-	if useAntigravitySchema {
-		payloadStr = util.CleanJSONSchemaForAntigravity(payloadStr)
-	} else {
-		payloadStr = util.CleanJSONSchemaForGemini(payloadStr)
+	// Rename parametersJsonSchema → parameters and clean JSON schemas
+	// ONLY within the tools section to avoid corrupting function response data
+	// in request.contents (which may contain schema-like fields from tool outputs).
+	if toolsResult := gjson.Get(payloadStr, "request.tools"); toolsResult.Exists() {
+		toolsStr := toolsResult.Raw
+
+		paths := make([]string, 0)
+		util.Walk(gjson.Parse(toolsStr), "", "parametersJsonSchema", &paths)
+		for _, p := range paths {
+			toolsStr, _ = util.RenameKey(toolsStr, p, p[:len(p)-len("parametersJsonSchema")]+"parameters")
+		}
+
+		if useAntigravitySchema {
+			toolsStr = util.CleanJSONSchemaForAntigravity(toolsStr)
+		} else {
+			toolsStr = util.CleanJSONSchemaForGemini(toolsStr)
+		}
+
+		payloadStr, _ = sjson.SetRaw(payloadStr, "request.tools", toolsStr)
 	}
 
 	if useAntigravitySchema {
